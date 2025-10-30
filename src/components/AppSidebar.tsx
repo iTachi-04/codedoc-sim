@@ -34,8 +34,8 @@ export function AppSidebar() {
               <span className="text-white font-bold text-sm">CM</span>
             </div>
             <div className="flex flex-col">
-              <span className="font-semibold text-sm text-sidebar-foreground">CodeMed AI</span>
-              <span className="text-xs text-muted-foreground">Medical Learning</span>
+              <span className="font-semibold text-sm text-sidebar-foreground">Medical Simulator</span>
+              <span className="text-xs text-muted-foreground">Interactive Learning</span>
             </div>
           </div>
         )}

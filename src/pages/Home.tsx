@@ -44,7 +44,7 @@ const Home = () => {
             </div>
           </div>
           <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            Welcome to CodeMed AI
+            Welcome to Medical Simulator
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             Learn Medicine Interactively — Master diagnosis through hands-on simulations,
