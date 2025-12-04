@@ -1,21 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
-
-interface PatientCase {
-  id: number;
-  title: string;
-  description: string;
-  difficulty: string;
-  symptoms: string;
-  vitals: { bp: string; hr: string; temp: string; rr: string };
-  tests: string[];
-  diagnosis: string;
-}
+import { useSimulationLogs } from "@/hooks/useSimulationLogs";
+import { usePerformance } from "@/hooks/usePerformance";
+import { PatientCase } from "@/hooks/useCases";
 
 interface CaseSimulationProps {
   patientCase: PatientCase;
@@ -27,6 +19,13 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
   const [selectedTests, setSelectedTests] = useState<string[]>([]);
   const [selectedDiagnosis, setSelectedDiagnosis] = useState("");
   const [showResults, setShowResults] = useState(false);
+  const { logAction } = useSimulationLogs();
+  const { saveScore } = usePerformance();
+
+  useEffect(() => {
+    // Log when case is started
+    logAction("started_simulation", patientCase.id, { case_title: patientCase.title });
+  }, [patientCase.id]);
 
   const diagnosisOptions = [
     "Myocardial Infarction",
@@ -40,6 +39,7 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
     setSelectedTests((prev) =>
       prev.includes(test) ? prev.filter((t) => t !== test) : [...prev, test]
     );
+    logAction("selected_test", patientCase.id, { test_name: test });
   };
 
   const handleNext = () => {
@@ -52,11 +52,21 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
     }
   };
 
-  const handleSubmitDiagnosis = () => {
+  const handleSubmitDiagnosis = async () => {
     if (!selectedDiagnosis) {
       toast.error("Please select a diagnosis");
       return;
     }
+    
+    logAction("submitted_diagnosis", patientCase.id, { diagnosis: selectedDiagnosis });
+    
+    const score = calculateScore();
+    await saveScore(patientCase.id, score, {
+      testsSelected: selectedTests.length,
+      correctDiagnosis: selectedDiagnosis === patientCase.diagnosis,
+    });
+    
+    logAction("completed_simulation", patientCase.id, { score });
     setShowResults(true);
   };
 
@@ -64,7 +74,9 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
     const correctTests = selectedTests.filter((test) =>
       patientCase.tests.includes(test)
     ).length;
-    const testScore = (correctTests / patientCase.tests.length) * 50;
+    const testScore = patientCase.tests.length > 0 
+      ? (correctTests / patientCase.tests.length) * 50 
+      : 25;
     const diagnosisScore = selectedDiagnosis === patientCase.diagnosis ? 50 : 0;
     return Math.round(testScore + diagnosisScore);
   };
@@ -72,7 +84,7 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
   if (showResults) {
     const score = calculateScore();
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-teal-50 p-6">
+      <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 p-6">
         <div className="container mx-auto max-w-3xl">
           <Card className="border-2">
             <CardHeader>
@@ -99,7 +111,7 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
                 <div>
                   <h4 className="font-semibold mb-2 flex items-center gap-2">
                     {selectedDiagnosis === patientCase.diagnosis ? (
-                      <CheckCircle2 className="text-success" />
+                      <CheckCircle2 className="text-green-500" />
                     ) : (
                       <XCircle className="text-destructive" />
                     )}
@@ -139,7 +151,7 @@ export const CaseSimulation = ({ patientCase, onBack }: CaseSimulationProps) => 
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-teal-50 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5 p-6">
       <div className="container mx-auto max-w-4xl">
         <Button
           variant="ghost"
