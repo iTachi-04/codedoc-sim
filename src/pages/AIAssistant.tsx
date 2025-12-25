@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,8 @@ interface Message {
   timestamp: Date;
 }
 
+const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-medical-assistant`;
+
 const AIAssistant = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -22,9 +24,16 @@ const AIAssistant = () => {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || isLoading) return;
 
     const userMessage: Message = {
       role: "user",
@@ -32,40 +41,114 @@ const AIAssistant = () => {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
     setInput("");
     setIsLoading(true);
 
-    // Simulate AI response (in production, this would call the OpenAI API via edge function)
-    setTimeout(() => {
-      const responses: { [key: string]: string } = {
-        pneumonia: "Pneumonia is an infection that inflames the air sacs in one or both lungs. The air sacs may fill with fluid or pus, causing symptoms like cough with phlegm, fever, chills, and difficulty breathing. It can be caused by bacteria, viruses, or fungi.",
-        heart: "The heart is a muscular organ that pumps blood throughout the body via the circulatory system. It has four chambers: two atria (upper chambers) and two ventricles (lower chambers). The right side pumps deoxygenated blood to the lungs, while the left side pumps oxygenated blood to the rest of the body.",
-        diabetes: "Diabetes is a chronic condition that affects how your body turns food into energy. There are two main types: Type 1 (autoimmune condition where the pancreas produces little to no insulin) and Type 2 (where the body becomes resistant to insulin or doesn't make enough). Management includes blood sugar monitoring, medication, diet, and exercise.",
-      };
+    let assistantContent = "";
 
-      let responseContent = "I understand you're asking about medical topics. ";
-      
-      const lowerInput = input.toLowerCase();
-      if (lowerInput.includes("pneumonia")) {
-        responseContent = responses.pneumonia;
-      } else if (lowerInput.includes("heart")) {
-        responseContent = responses.heart;
-      } else if (lowerInput.includes("diabetes")) {
-        responseContent = responses.diabetes;
-      } else {
-        responseContent += "While I can provide general medical information, please consult with a qualified healthcare provider for specific medical advice or diagnosis. Is there a particular medical topic you'd like to learn more about?";
+    try {
+      const resp = await fetch(CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({
+          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      if (resp.status === 429) {
+        toast.error("Rate limit exceeded. Please try again later.");
+        setIsLoading(false);
+        return;
       }
 
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: responseContent,
-        timestamp: new Date(),
+      if (resp.status === 402) {
+        toast.error("AI credits depleted. Please add funds to continue.");
+        setIsLoading(false);
+        return;
+      }
+
+      if (!resp.ok || !resp.body) {
+        throw new Error("Failed to start stream");
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let textBuffer = "";
+      let streamDone = false;
+
+      const upsertAssistant = (nextChunk: string) => {
+        assistantContent += nextChunk;
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant" && last.timestamp.getTime() > userMessage.timestamp.getTime()) {
+            return prev.map((m, i) =>
+              i === prev.length - 1 ? { ...m, content: assistantContent } : m
+            );
+          }
+          return [...prev, { role: "assistant", content: assistantContent, timestamp: new Date() }];
+        });
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        textBuffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex: number;
+        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+          let line = textBuffer.slice(0, newlineIndex);
+          textBuffer = textBuffer.slice(newlineIndex + 1);
+
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          if (line.startsWith(":") || line.trim() === "") continue;
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") {
+            streamDone = true;
+            break;
+          }
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            if (content) upsertAssistant(content);
+          } catch {
+            textBuffer = line + "\n" + textBuffer;
+            break;
+          }
+        }
+      }
+
+      // Final flush
+      if (textBuffer.trim()) {
+        for (let raw of textBuffer.split("\n")) {
+          if (!raw) continue;
+          if (raw.endsWith("\r")) raw = raw.slice(0, -1);
+          if (raw.startsWith(":") || raw.trim() === "") continue;
+          if (!raw.startsWith("data: ")) continue;
+          const jsonStr = raw.slice(6).trim();
+          if (jsonStr === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+            if (content) upsertAssistant(content);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch (error) {
+      console.error("AI Assistant error:", error);
+      toast.error("Failed to get response. Please try again.");
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -98,7 +181,7 @@ const AIAssistant = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0 flex flex-col h-[calc(100%-100px)]">
-            <ScrollArea className="flex-1 p-6">
+            <ScrollArea className="flex-1 p-6" ref={scrollRef}>
               <div className="space-y-4">
                 {messages.map((message, index) => (
                   <div
@@ -119,7 +202,7 @@ const AIAssistant = () => {
                           : "bg-muted"
                       }`}
                     >
-                      <p className="text-sm">{message.content}</p>
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                       <p className="text-xs opacity-70 mt-2">
                         {message.timestamp.toLocaleTimeString()}
                       </p>
@@ -131,7 +214,7 @@ const AIAssistant = () => {
                     )}
                   </div>
                 ))}
-                {isLoading && (
+                {isLoading && messages[messages.length - 1]?.role === "user" && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-full medical-gradient flex items-center justify-center">
                       <Bot className="h-4 w-4 text-white" />
