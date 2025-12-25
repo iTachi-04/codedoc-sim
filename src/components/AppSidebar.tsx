@@ -1,5 +1,5 @@
-import { Home, Users, Eye, MessageSquare, User } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { Home, Users, Eye, MessageSquare, User, LogOut } from "lucide-react";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   Sidebar,
   SidebarContent,
@@ -11,7 +11,10 @@ import {
   SidebarMenuItem,
   SidebarTrigger,
   useSidebar,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 
 const menuItems = [
   { title: "Home", url: "/", icon: Home },
@@ -23,7 +26,15 @@ const menuItems = [
 
 export function AppSidebar() {
   const { state } = useSidebar();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const collapsed = state === "collapsed";
+
+  const handleSignOut = async () => {
+    await signOut();
+    toast.success("Signed out successfully");
+    navigate("/auth");
+  };
 
   return (
     <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon">
@@ -71,6 +82,22 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      {user && (
+        <SidebarFooter className="border-t border-sidebar-border p-4">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                onClick={handleSignOut}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg text-destructive hover:bg-destructive/10 smooth-transition w-full"
+              >
+                <LogOut className="h-4 w-4 flex-shrink-0" />
+                {!collapsed && <span>Sign Out</span>}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      )}
     </Sidebar>
   );
 }
